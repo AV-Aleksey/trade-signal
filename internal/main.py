@@ -1,4 +1,8 @@
-def hello_world() -> str:
-    return "Hello, world!"
+from config import settings
 
-print(hello_world())
+
+def get_api_bot_key() -> str:
+    return settings.API_BOT_KEY
+
+
+print(get_api_bot_key())
