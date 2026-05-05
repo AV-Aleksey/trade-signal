@@ -1,0 +1,11 @@
+[project]
+name = "trade-signal"
+version = "0.1.0"
+description = "Trade signal bot"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=3.0.2",
+    "python-dotenv>=1.2.2",
+    "python-telegram-bot>=22.7",
+    "yfinance>=1.3.0",
+]
