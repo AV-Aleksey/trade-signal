@@ -1,13 +1,10 @@
-"""Application configuration."""
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
-
     LOG_LEVEL: str = "INFO"
-    API_BOT_KEY: str
+    ITICK_API_KEY: str = ""
+    ITICK_ENVIRONMENT: str = "DEV"
 
     model_config = SettingsConfigDict(env_file=".env")
 
