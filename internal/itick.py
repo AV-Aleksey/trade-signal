@@ -10,22 +10,16 @@ import requests
 from internal.config import settings
 
 # Базовые параметры запроса к iTick.
-
-ITICK_FOREX_BASE_URLS: dict[str, str] = {
+ITICK_FOREX_BASE_URLS = {
     "DEV": "https://api-free.itick.org/forex",
     "PROD": "https://api0.itick.org/forex",
 }
 
 # Карта интервалов kType в миллисекундах для проверки закрытия бара.
-KTYPE_TO_MILLISECONDS: dict[int, int] = {
+KTYPE_TO_MILLISECONDS = {
     1: 60_000,
-    2: 300_000,
-    3: 900_000,
-    4: 1_800_000,
-    5: 3_600_000,
-    8: 86_400_000,
-    9: 604_800_000,
-    10: 2_592_000_000,
+    2: 900_000,
+    3: 1_800_000,
 }
 
 class Itick:
@@ -48,8 +42,6 @@ class Itick:
         region: str,
         code: str,
         k_type: int,
-        limit: int,
-        timeout_seconds: int,
     ) -> list[dict[str, float | int]]:
         # Запрашиваем сырые Kline-данные.
         if not self._is_connected:
@@ -63,10 +55,10 @@ class Itick:
                 "region": region,
                 "code": code,
                 "kType": k_type,
-                "limit": limit,
+                "limit": 500,
             },
             headers={"accept": "application/json", "token": self._token},
-            timeout=timeout_seconds,
+            timeout=30.0,
         )
 
         response.raise_for_status()
@@ -137,8 +129,10 @@ class Itick:
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         # Добавляем EMA и ATR.
         result_df: pd.DataFrame = df.copy()
-        result_df["EMA_5"] = ta.ema(result_df["close"], length=5)
+
+        result_df["EMA_4"] = ta.ema(result_df["close"], length=4)
         result_df["EMA_8"] = ta.ema(result_df["close"], length=8)
+        
         result_df["ATR_14"] = ta.atr(
             result_df["high"],
             result_df["low"],
@@ -148,21 +142,19 @@ class Itick:
 
         return result_df
 
-    def generate_signal(self, df: pd.DataFrame) -> bool:
+    def check_signal(self, df: pd.DataFrame) -> bool:
         # Проверяем пересечение EMA на двух последних барах.
-        clean_df: pd.DataFrame = df.dropna(subset=["EMA_5", "EMA_8"]).copy()
+        clean_df = df.dropna(subset=["EMA_4", "EMA_8"]).copy()
+
         if len(clean_df) < 2:
             return False
 
-        last_candle: pd.Series = clean_df.iloc[-1]
-        previous_candle: pd.Series = clean_df.iloc[-2]
+        last_candle = clean_df.iloc[-1]
+        previous_candle = clean_df.iloc[-2]
 
-        has_buy_signal: bool = (last_candle["EMA_5"] > last_candle["EMA_8"]) and (
-            previous_candle["EMA_5"] < previous_candle["EMA_8"]
+        has_buy_signal = (last_candle["EMA_4"] > last_candle["EMA_8"]) and (
+            previous_candle["EMA_4"] < previous_candle["EMA_8"]
         )
-
-        if has_buy_signal:
-            print("Buy signal")
 
         return has_buy_signal
 

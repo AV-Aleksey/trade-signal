@@ -1,32 +1,39 @@
 from internal.itick import Itick
+import pandas as pd
 
-ITICK_REGION: str = "GB"
-ITICK_CODE: str = "EURUSD"
-ITICK_K_TYPE: int = 3
-ITICK_LIMIT: int = 500
-ITICK_TIMEOUT_SECONDS: int = 15
+DEFAULT_ITICK_CODE: str = "GB/GBPJPY"
+DEFAULT_ITICK_K_TYPE: int = 1
 
-def main(client: Itick) -> None:
-    # Выполняем этапы ТЗ строго по порядку внутри main.
+def main(
+    code: str = DEFAULT_ITICK_CODE,
+    k_type: int = DEFAULT_ITICK_K_TYPE,
+    client: Itick | None = None,
+) -> dict[str, str | pd.DataFrame]:
+    if client is None:
+        client = Itick()
+
     client.connect()
 
+    region, code_name = code.split('/')
+
     candles = client.fetch_candles(
-        region=ITICK_REGION,
-        code=ITICK_CODE,
-        k_type=ITICK_K_TYPE,
-        limit=ITICK_LIMIT,
-        timeout_seconds=ITICK_TIMEOUT_SECONDS,
+        code=code_name,
+        region=region,
+        k_type=k_type,
     )
 
-    candles_frame = client.format_candles(candles=candles, k_type=ITICK_K_TYPE)
-
-    
+    candles_frame = client.format_candles(candles=candles, k_type=k_type)
     indicators_frame = client.calculate_indicators(df=candles_frame)
+    has_buy_signal = client.check_signal(df=indicators_frame)
 
-    print(indicators_frame)
-    client.plot_close(df=indicators_frame)
-    # client.generate_signal(df=indicators_frame)
+    signal_text = "EMA 4 пересекает EMA 8" if has_buy_signal else "Нет сигнала"
+
+    return {
+        "indicator": code,
+        "signal": signal_text,
+        "data_frame": indicators_frame,
+    }
 
 
 if __name__ == "__main__":
-    main(client=Itick())
+    main()
