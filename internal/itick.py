@@ -58,7 +58,7 @@ class Itick:
                 "limit": 500,
             },
             headers={"accept": "application/json", "token": self._token},
-            timeout=30.0,
+            timeout=45.0,
         )
 
         response.raise_for_status()
@@ -132,7 +132,7 @@ class Itick:
 
         result_df["EMA_4"] = ta.ema(result_df["close"], length=4)
         result_df["EMA_8"] = ta.ema(result_df["close"], length=8)
-        
+
         result_df["ATR_14"] = ta.atr(
             result_df["high"],
             result_df["low"],
@@ -140,23 +140,84 @@ class Itick:
             length=14,
         )
 
+        result_df["RSI_14"] = ta.rsi(result_df["close"], length=14)
+
+        macd = ta.macd(result_df["close"])
+
+        if macd is not None and not macd.empty:
+            result_df = pd.concat([result_df, macd], axis=1)
+
         return result_df
 
-    def check_signal(self, df: pd.DataFrame) -> bool:
-        # Проверяем пересечение EMA на двух последних барах.
+    def check_signal(self, df: pd.DataFrame) -> dict[str, bool]:
+        threshold: float = 0.001
         clean_df = df.dropna(subset=["EMA_4", "EMA_8"]).copy()
 
         if len(clean_df) < 2:
-            return False
+            return {"is_ema_crossing": False, "up": False}
 
         last_candle = clean_df.iloc[-1]
         previous_candle = clean_df.iloc[-2]
 
-        has_buy_signal = (last_candle["EMA_4"] > last_candle["EMA_8"]) and (
-            previous_candle["EMA_4"] < previous_candle["EMA_8"]
+        is_bullish_cross = (
+            last_candle["EMA_4"] >= last_candle["EMA_8"] - threshold
+            and previous_candle["EMA_4"] <= previous_candle["EMA_8"] + threshold
         )
 
-        return has_buy_signal
+        is_bearish_cross = (
+            last_candle["EMA_4"] <= last_candle["EMA_8"] + threshold
+            and previous_candle["EMA_4"] >= previous_candle["EMA_8"] - threshold
+        )
+
+        if is_bullish_cross:
+            return {"is_ema_crossing": True, "up": True}
+
+        if is_bearish_cross:
+            return {"is_ema_crossing": True, "up": False}
+
+        return {"is_ema_crossing": False, "up": False}
+
+    def extract_last_two_ema_rows(
+        self,
+        df: pd.DataFrame,
+    ) -> list[dict[str, float | int]] | None:
+        clean = df.dropna(subset=["EMA_4", "EMA_8"])
+
+        if len(clean) < 2:
+            return None
+
+        prev_row = clean.iloc[-2]
+        last_row = clean.iloc[-1]
+
+        def _utc_iso(ts: object) -> str:
+            t = pd.Timestamp(ts)
+
+            if t.tzinfo is None:
+                t = t.tz_localize("UTC")
+            else:
+                t = t.tz_convert("UTC")
+
+            return t.strftime("%Y-%m-%d %H:%M UTC")
+
+        time_prev = _utc_iso(prev_row["time"])
+        time_last = _utc_iso(last_row["time"])
+
+        return [
+            {
+                "id": int(clean.index[-2]),
+                "time": time_prev,
+                "ema4": float(prev_row["EMA_4"]),
+                "ema8": float(prev_row["EMA_8"]),
+                "close": float(prev_row["close"]),
+            },
+            {
+                "id": int(clean.index[-1]),
+                "time": time_last,
+                "ema4": float(last_row["EMA_4"]),
+                "ema8": float(last_row["EMA_8"]),
+                "close": float(last_row["close"]),
+            },
+        ]
 
     def plot_close(self, df: pd.DataFrame) -> None:
         # Рисуем график закрытия.

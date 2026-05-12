@@ -1,5 +1,7 @@
-from internal.itick import Itick
 import pandas as pd
+
+from internal.answer import MainAnalysisResult
+from internal.itick import Itick
 
 DEFAULT_ITICK_CODE: str = "GB/GBPJPY"
 DEFAULT_ITICK_K_TYPE: int = 1
@@ -9,7 +11,7 @@ def main(
     code: str = DEFAULT_ITICK_CODE,
     k_type: int = DEFAULT_ITICK_K_TYPE,
     client: Itick | None = None,
-) -> dict[str, str | pd.DataFrame | list[str]]:
+) -> MainAnalysisResult:
     if client is None:
         client = Itick()
 
@@ -25,16 +27,19 @@ def main(
 
     candles_frame = client.format_candles(candles=candles, k_type=k_type)
     indicators_frame = client.calculate_indicators(df=candles_frame)
-    has_buy_signal = client.check_signal(df=indicators_frame)
-    
-    signals: list[str] = []
+    ema_cross = client.check_signal(df=indicators_frame)
 
-    if has_buy_signal:
-        signals.append("EMA 4 пересекает EMA 8")
+    signals: list[dict[str, bool]] = []
+
+    if ema_cross["is_ema_crossing"]:
+        signals.append(ema_cross)
+
+    print(indicators_frame)
 
     return {
         "indicator": code,
         "signals": signals,
+        "ema_last_two_rows": client.extract_last_two_ema_rows(indicators_frame),
         "data_frame": indicators_frame,
     }
 
