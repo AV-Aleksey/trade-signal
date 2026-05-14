@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
+from telegram import BotCommand, KeyboardButton, MenuButtonCommands, ReplyKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -12,23 +12,29 @@ from telegram.ext import (
     filters,
 )
 
-from internal.answer import Answer
+from internal.ai.main import OpenRouter, OpenRouterRateLimitError
+from internal.ai.ta_ai import TA_SYSTEM_PROMPT, build_ta_user_message
 from internal.config import settings
-from internal.main import main
-from internal.monitor_job import MonitorJob
-from internal.open_router import OpenRouter, OpenRouterRateLimitError
-from internal.ta_ai import TA_SYSTEM_PROMPT, build_ta_user_message
+from internal.forex.main import main
+from internal.telegram.answer import Answer
+from internal.telegram.monitor_job import MonitorJob
 
 KB_RESTART = "Назад"
 KB_STOP = "Остановить"
 KB_AI = "Анализ ИИ"
 KB_REQUEST_DATA = "Запросить данные"
 
-DEFAULT_PICK_PAIR = ["GB/GBPJPY", "GB/EURUSD", "GB/XAUUSD"]
+DEFAULT_PICK_PAIR = ["GB/USDJPY", "GB/EURUSD", "GB/XAUUSD"]
 DEFAULT_TICK_VALUE = [
     {"label": "1 минута", "value": 1},
-    {"label": "15 минут", "value": 2},
-    {"label": "30 минут", "value": 3},
+    {"label": "5 минут", "value": 2},
+    {"label": "15 минут", "value": 3},
+    {"label": "30 минут", "value": 4},
+    {"label": "1 час", "value": 5},
+    {"label": "2 часа", "value": 6},
+    {"label": "4 часа", "value": 7},
+    {"label": "День", "value": 8},
+    {"label": "Неделя", "value": 9},
 ]
 
 SELECT_PAIR, SELECT_TICK, MONITORING = range(3)
@@ -103,6 +109,43 @@ def _monitoring_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
+def _pair_keyboard() -> ReplyKeyboardMarkup:
+    pair_rows = [[KeyboardButton(text=pair)] for pair in DEFAULT_PICK_PAIR]
+
+    return ReplyKeyboardMarkup(
+        pair_rows,
+        resize_keyboard=True,
+        input_field_placeholder="GB/EURUSD или кнопка ниже",
+    )
+
+
+def _tick_keyboard() -> ReplyKeyboardMarkup:
+    tick_cols = 3
+    tick_rows: list[list[KeyboardButton]] = []
+    row_buf: list[KeyboardButton] = []
+
+    for item in DEFAULT_TICK_VALUE:
+        row_buf.append(KeyboardButton(text=item["label"]))
+
+        if len(row_buf) == tick_cols:
+            tick_rows.append(row_buf)
+            row_buf = []
+
+    if row_buf:
+        tick_rows.append(row_buf)
+
+    tick_rows.append([KeyboardButton(text=KB_RESTART)])
+
+    return ReplyKeyboardMarkup(
+        tick_rows,
+        resize_keyboard=True,
+        input_field_placeholder="например: 1 минута",
+    )
+
+
+_MSG_TEXT = filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     message = update.message
 
@@ -114,17 +157,9 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     context.user_data.pop("pair_code", None)
     context.user_data.pop("ai_cooldown_until", None)
 
-    pair_rows = [[KeyboardButton(text=pair)] for pair in DEFAULT_PICK_PAIR]
-
-    pair_keyboard = ReplyKeyboardMarkup(
-        pair_rows,
-        resize_keyboard=True,
-        input_field_placeholder="GB/EURUSD или кнопка ниже",
-    )
-
     await message.reply_text(
         "Выберите валютную пару кнопкой или введите вручную в формате forex GB/XXXXXX",
-        reply_markup=pair_keyboard,
+        reply_markup=_pair_keyboard(),
     )
 
     return SELECT_PAIR
@@ -137,18 +172,9 @@ async def handle_pair(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     context.user_data["pair_code"] = message.text.strip()
 
-    tick_rows = [[KeyboardButton(text=item["label"])] for item in DEFAULT_TICK_VALUE]
-    tick_rows.append([KeyboardButton(text=KB_RESTART)])
-
-    tick_keyboard = ReplyKeyboardMarkup(
-        tick_rows,
-        resize_keyboard=True,
-        input_field_placeholder="например: 1 минута",
-    )
-
     await message.reply_text(
         "Выберите таймфрейм кнопкой",
-        reply_markup=tick_keyboard,
+        reply_markup=_tick_keyboard(),
     )
 
     return SELECT_TICK
@@ -172,7 +198,10 @@ async def handle_tick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             break
 
     if k_type is None:
-        await message.reply_text("Выберите таймфрейм кнопкой.")
+        await message.reply_text(
+            "Выберите таймфрейм кнопкой.",
+            reply_markup=_tick_keyboard(),
+        )
 
         return SELECT_TICK
 
@@ -295,6 +324,13 @@ async def handle_monitoring(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return MONITORING
 
 
+async def _post_init(application: Application) -> None:
+    await application.bot.set_my_commands(
+        [BotCommand("start", "Начать работу с ботом")],
+    )
+    await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
+
 def init() -> Application:
     token = settings.BOT_API_KEY.strip()
 
@@ -302,22 +338,35 @@ def init() -> Application:
         raise RuntimeError("Не задан BOT_API_KEY")
 
     conversation = ConversationHandler(
-        entry_points=[CommandHandler("start", handle_start)],
+        entry_points=[
+            CommandHandler(
+                "start",
+                handle_start,
+                filters=filters.UpdateType.MESSAGE,
+            ),
+        ],
         states={
             SELECT_PAIR: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_pair),
+                MessageHandler(_MSG_TEXT, handle_pair),
             ],
             SELECT_TICK: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_tick),
+                MessageHandler(_MSG_TEXT, handle_tick),
             ],
             MONITORING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_monitoring),
+                MessageHandler(_MSG_TEXT, handle_monitoring),
             ],
         },
-        fallbacks=[CommandHandler("start", handle_start)],
+        fallbacks=[],
+        allow_reentry=True,
     )
 
-    application = Application.builder().token(token).build()
+    application = (
+        Application.builder()
+        .token(token)
+        .concurrent_updates(False)
+        .post_init(_post_init)
+        .build()
+    )
     application.add_handler(conversation)
 
     return application
@@ -326,8 +375,7 @@ def init() -> Application:
 def run_bot() -> None:
     application = init()
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    run_bot()
+    application.run_polling(
+        allowed_updates=[Update.MESSAGE],
+        drop_pending_updates=True,
+    )

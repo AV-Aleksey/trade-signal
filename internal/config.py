@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     ITICK_API_KEY: str = ""
-    ITICK_ENVIRONMENT: str = "PROD"
+    ITICK_ENVIRONMENT: str = "DEV"
 
     BOT_API_KEY: str = ""
 

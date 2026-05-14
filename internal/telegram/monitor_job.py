@@ -3,8 +3,8 @@ from typing import TypedDict
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, JobQueue
 
-from internal.answer import Answer
-from internal.main import main
+from internal.forex.main import main
+from internal.telegram.answer import Answer
 
 
 class _MonitorData(TypedDict):
@@ -14,8 +14,8 @@ class _MonitorData(TypedDict):
 
 
 class MonitorJob:
-    INTERVAL_SEC = 30
-    _IMMEDIATE_JOB_SUFFIX = ":immediate"
+    INTERVAL_SEC = 60
+    IMMEDIATE_JOB_SUFFIX = ":immediate"
 
     def __init__(self, job_queue: JobQueue, chat_id: int) -> None:
         self._job_queue = job_queue
@@ -24,15 +24,17 @@ class MonitorJob:
 
     @property
     def _immediate_job_name(self) -> str:
-        return f"{self._name}{self._IMMEDIATE_JOB_SUFFIX}"
+        return f"{self._name}{self.IMMEDIATE_JOB_SUFFIX}"
 
     def add(self, pair_code: str, k_type: int) -> None:
         self.remove()
+
         data: _MonitorData = {
             "pair_code": pair_code,
             "k_type": k_type,
             "prev_had_signal": False,
         }
+
         self._job_queue.run_once(
             self._tick,
             when=0,
@@ -40,6 +42,7 @@ class MonitorJob:
             chat_id=self._chat_id,
             data=data,
         )
+
         self._job_queue.run_repeating(
             self._tick,
             interval=self.INTERVAL_SEC,
@@ -52,6 +55,7 @@ class MonitorJob:
     def remove(self) -> None:
         for job in self._job_queue.get_jobs_by_name(self._name):
             job.schedule_removal()
+
         for job in self._job_queue.get_jobs_by_name(self._immediate_job_name):
             job.schedule_removal()
 
@@ -70,10 +74,11 @@ class MonitorJob:
     async def _tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         job = context.job
         data = job.data
+
         try:
             result = main(code=data["pair_code"], k_type=data["k_type"])
 
-            has_signal = bool(result["signals"])
+            has_signal = result["signals"]["has_some_signal"]
 
             if has_signal and not data["prev_had_signal"]:
                 await context.bot.send_message(
