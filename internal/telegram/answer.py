@@ -10,6 +10,7 @@ from internal.forex.signal import CrossSignalFlags, Signals
 
 EMA_DECIMALS = 5
 
+
 class SignalType(Enum):
     EMA_UP = ("📈", "EMA 4 пересекает EMA 8 вверх")
     EMA_DOWN = ("📉", "EMA 4 пересекает EMA 8 вниз")
@@ -54,33 +55,41 @@ class Answer:
         return lines
 
     @staticmethod
-    def _format_signals_block(flags: Signals) -> str:
+    def _format_signals_block(
+        flags: Signals,
+        enabled_keys: frozenset[str] | None = None,
+    ) -> str:
         parts: list[str] = []
 
-        parts.extend(
-            Answer._format_cross_subsection(
-                "EMA 4 / EMA 8",
-                flags["ema_4_8"],
-                SignalType.EMA_UP,
-                SignalType.EMA_DOWN,
-            ),
-        )
-        parts.extend(
-            Answer._format_cross_subsection(
-                "EMA 8 / EMA 16",
-                flags["ema_8_16"],
-                SignalType.EMA_8_16_UP,
-                SignalType.EMA_8_16_DOWN,
-            ),
-        )
-        parts.extend(
-            Answer._format_cross_subsection(
-                "MACD — линия / сигнал",
-                flags["macd"],
-                SignalType.MACD_UP,
-                SignalType.MACD_DOWN,
-            ),
-        )
+        if enabled_keys is None or "ema_4_8" in enabled_keys:
+            parts.extend(
+                Answer._format_cross_subsection(
+                    "EMA 4 / EMA 8",
+                    flags["ema_4_8"],
+                    SignalType.EMA_UP,
+                    SignalType.EMA_DOWN,
+                ),
+            )
+
+        if enabled_keys is None or "ema_8_16" in enabled_keys:
+            parts.extend(
+                Answer._format_cross_subsection(
+                    "EMA 8 / EMA 16",
+                    flags["ema_8_16"],
+                    SignalType.EMA_8_16_UP,
+                    SignalType.EMA_8_16_DOWN,
+                ),
+            )
+
+        if enabled_keys is None or "macd" in enabled_keys:
+            parts.extend(
+                Answer._format_cross_subsection(
+                    "MACD — линия / сигнал",
+                    flags["macd"],
+                    SignalType.MACD_UP,
+                    SignalType.MACD_DOWN,
+                ),
+            )
 
         while parts and parts[-1] == "":
             parts.pop()
@@ -123,8 +132,14 @@ class Answer:
         return "\n".join(chunks)
 
     @staticmethod
-    def monitor_alert(result: MainAnalysisResult) -> str:
-        signals_block = Answer._format_signals_block(result["signals"])
+    def monitor_alert(
+        result: MainAnalysisResult,
+        enabled_signal_keys: frozenset[str],
+    ) -> str:
+        signals_block = Answer._format_signals_block(
+            result["signals"],
+            enabled_signal_keys,
+        )
 
         return "\n".join(
             [
@@ -141,9 +156,15 @@ class Answer:
         )
 
     @staticmethod
-    def data_snapshot(result: MainAnalysisResult) -> str:
-        signals_block = Answer._format_signals_block(result["signals"])
-        
+    def data_snapshot(
+        result: MainAnalysisResult,
+        enabled_signal_keys: frozenset[str],
+    ) -> str:
+        signals_block = Answer._format_signals_block(
+            result["signals"],
+            enabled_signal_keys,
+        )
+
         return "\n".join(
             [
                 escape_markdown(f"Пара: {result['indicator']}", version=2),

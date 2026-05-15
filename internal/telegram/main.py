@@ -19,10 +19,12 @@ from internal.forex.main import main
 from internal.telegram.answer import Answer
 from internal.telegram.monitor_job import MonitorJob
 
-KB_RESTART = "Назад"
-KB_STOP = "Остановить"
-KB_AI = "Анализ ИИ"
-KB_REQUEST_DATA = "Запросить данные"
+KB_RESTART = "⬅️ Назад"
+KB_STOP = "⏹️ Остановить"
+KB_AI = "🤖 Анализ ИИ"
+KB_REQUEST_DATA = "📊 Запросить данные"
+KB_SIGNAL_SELECT_ALL = "☑️ Выбрать все"
+KB_SIGNAL_DONE = "✅ Готово"
 
 DEFAULT_PICK_PAIR = ["GB/USDJPY", "GB/EURUSD", "GB/XAUUSD"]
 DEFAULT_TICK_VALUE = [
@@ -37,7 +39,13 @@ DEFAULT_TICK_VALUE = [
     {"label": "Неделя", "value": 9},
 ]
 
-SELECT_PAIR, SELECT_TICK, MONITORING = range(3)
+DEFAULT_SIGNAL_OPTIONS: list[dict[str, str]] = [
+    {"label": "EMA 4 / EMA 8", "value": "ema_4_8"},
+    {"label": "EMA 8 / EMA 16", "value": "ema_8_16"},
+    {"label": "MACD / сигнал", "value": "macd"},
+]
+
+SELECT_PAIR, SELECT_TICK, SELECT_SIGNALS, MONITORING = range(4)
 
 AI_COOLDOWN_SEC = 60.0
 
@@ -143,6 +151,43 @@ def _tick_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def _signal_selection_keyboard(selected: set[str]) -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = []
+
+    for item in DEFAULT_SIGNAL_OPTIONS:
+        value = item["value"]
+        label = item["label"]
+        prefix = "✓ " if value in selected else ""
+        rows.append([KeyboardButton(text=prefix + label)])
+
+    rows.append(
+        [
+            KeyboardButton(text=KB_SIGNAL_SELECT_ALL),
+            KeyboardButton(text=KB_SIGNAL_DONE),
+        ],
+    )
+    rows.append([KeyboardButton(text=KB_RESTART)])
+
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def _normalize_signal_row_label(text: str) -> str:
+    return text.removeprefix("✓ ").strip()
+
+
+def _signal_selection_summary(selected: set[str]) -> str:
+    labels: list[str] = []
+
+    for item in DEFAULT_SIGNAL_OPTIONS:
+        if item["value"] in selected:
+            labels.append(item["label"])
+
+    if not labels:
+        return "ничего не выбрано"
+
+    return ", ".join(labels)
+
+
 _MSG_TEXT = filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND
 
 
@@ -156,6 +201,8 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     context.user_data.pop("pair_code", None)
     context.user_data.pop("ai_cooldown_until", None)
+    context.user_data.pop("pending_k_type", None)
+    context.user_data.pop("signal_key_selection", None)
 
     await message.reply_text(
         "Выберите валютную пару кнопкой или введите вручную в формате forex GB/XXXXXX",
@@ -212,19 +259,121 @@ async def handle_tick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
         return await handle_start(update, context)
 
-    MonitorJob(context.job_queue, update.effective_chat.id).add(
-        pair_code=pair_code,
-        k_type=k_type,
-    )
-
-    context.user_data.pop("pair_code", None)
+    context.user_data["pending_k_type"] = k_type
+    context.user_data["signal_key_selection"] = set()
 
     await message.reply_text(
-        f"Мониторинг каждые {MonitorJob.INTERVAL_SEC} с.\n{pair_code}",
-        reply_markup=_monitoring_keyboard(),
+        "Выберите сигналы для уведомлений (минимум один): строка — вкл/выкл, "
+        f"«{KB_SIGNAL_SELECT_ALL}» или «{KB_SIGNAL_DONE}».",
+        reply_markup=_signal_selection_keyboard(set()),
     )
 
-    return MONITORING
+    return SELECT_SIGNALS
+
+
+async def handle_signals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = update.message
+
+    if message is None:
+        return SELECT_SIGNALS
+
+    text_raw = message.text.strip()
+    text = _normalize_signal_row_label(text_raw)
+    pair_code = context.user_data.get("pair_code")
+    k_type = context.user_data.get("pending_k_type")
+    selected = context.user_data.get("signal_key_selection")
+
+    if not isinstance(selected, set):
+        selected = set()
+        context.user_data["signal_key_selection"] = selected
+
+    if text == KB_RESTART:
+        context.user_data.pop("pending_k_type", None)
+        context.user_data.pop("signal_key_selection", None)
+
+        if pair_code is None:
+            return await handle_start(update, context)
+
+        await message.reply_text(
+            "Выберите таймфрейм кнопкой",
+            reply_markup=_tick_keyboard(),
+        )
+
+        return SELECT_TICK
+
+    if pair_code is None or k_type is None:
+        await message.reply_text("Сначала выберите пару и таймфрейм.")
+
+        return await handle_start(update, context)
+
+    if text == KB_SIGNAL_SELECT_ALL:
+        for item in DEFAULT_SIGNAL_OPTIONS:
+            selected.add(item["value"])
+
+        await message.reply_text(
+            f"Выбрано всё. Сейчас: {_signal_selection_summary(selected)}",
+            reply_markup=_signal_selection_keyboard(selected),
+        )
+
+        return SELECT_SIGNALS
+
+    if text == KB_SIGNAL_DONE:
+        if not selected:
+            await message.reply_text(
+                f"Нужно выбрать хотя бы один сигнал (или «{KB_SIGNAL_SELECT_ALL}»).",
+                reply_markup=_signal_selection_keyboard(selected),
+            )
+
+            return SELECT_SIGNALS
+
+        MonitorJob(context.job_queue, update.effective_chat.id).add(
+            pair_code=pair_code,
+            k_type=int(k_type),
+            enabled_signal_keys=frozenset(selected),
+        )
+
+        context.user_data.pop("pair_code", None)
+        context.user_data.pop("pending_k_type", None)
+        context.user_data.pop("signal_key_selection", None)
+
+        await message.reply_text(
+            f"Мониторинг каждые {MonitorJob.INTERVAL_SEC} с.\n{pair_code}\n"
+            f"Уведомления по: {_signal_selection_summary(selected)}",
+            reply_markup=_monitoring_keyboard(),
+        )
+
+        return MONITORING
+
+    toggled = False
+
+    for item in DEFAULT_SIGNAL_OPTIONS:
+        if item["label"] == text:
+            value = item["value"]
+
+            if value in selected:
+                selected.discard(value)
+            else:
+                selected.add(value)
+
+            toggled = True
+
+            break
+
+    if not toggled:
+        await message.reply_text(
+            f"Используйте кнопки: сигнал, «{KB_SIGNAL_SELECT_ALL}», "
+            f"«{KB_SIGNAL_DONE}», «{KB_RESTART}».",
+            reply_markup=_signal_selection_keyboard(selected),
+        )
+
+        return SELECT_SIGNALS
+
+    await message.reply_text(
+        f"Сейчас: {_signal_selection_summary(selected)}",
+        reply_markup=_signal_selection_keyboard(selected),
+    )
+
+    return SELECT_SIGNALS
 
 
 async def handle_monitoring(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -259,7 +408,7 @@ async def handle_monitoring(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             left = int(until - now) + 1
 
             await message.reply_text(
-                f"ИИ: не чаще раз в {int(AI_COOLDOWN_SEC)} с. Подожди ещё ~{left} с.",
+                f"Отчет формируется. Подожди ещё ~{left} с.",
                 reply_markup=_monitoring_keyboard(),
             )
 
@@ -270,12 +419,12 @@ async def handle_monitoring(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if params is None:
             return await handle_start(update, context)
 
-        pair_code, k_type = params
+        pair_code, k_type, _enabled_keys = params
 
         context.user_data["ai_cooldown_until"] = now + AI_COOLDOWN_SEC
 
         await message.reply_text(
-            "ИИ: отчёт формируется в фоне (обычно 1–5 мин). \n"
+            "ИИ: отчет формируется. \n"
             f"Повторный ИИ — не раньше чем через {int(AI_COOLDOWN_SEC)} с.",
             reply_markup=_monitoring_keyboard(),
         )
@@ -299,12 +448,12 @@ async def handle_monitoring(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if params is None:
             return await handle_start(update, context)
 
-        pair_code, k_type = params
+        pair_code, k_type, _enabled_keys = params
         try:
             result = await asyncio.to_thread(main, pair_code, k_type)
 
             await message.reply_text(
-                Answer.data_snapshot(result),
+                Answer.data_snapshot(result, _enabled_keys),
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=_monitoring_keyboard(),
             )
@@ -317,7 +466,7 @@ async def handle_monitoring(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return MONITORING
 
     await message.reply_text(
-        "Только кнопки: Остановить, Анализ ИИ, Запросить данные.",
+        f"Только кнопки: {KB_STOP}, {KB_AI}, {KB_REQUEST_DATA}.",
         reply_markup=_monitoring_keyboard(),
     )
 
@@ -351,6 +500,9 @@ def init() -> Application:
             ],
             SELECT_TICK: [
                 MessageHandler(_MSG_TEXT, handle_tick),
+            ],
+            SELECT_SIGNALS: [
+                MessageHandler(_MSG_TEXT, handle_signals),
             ],
             MONITORING: [
                 MessageHandler(_MSG_TEXT, handle_monitoring),
