@@ -8,6 +8,7 @@ import pandas_ta as ta
 import requests
 
 from internal.config import settings
+from internal.forex.filter import FilterChecker, FilterFlags, FilterName
 from internal.forex.signal import SignalChecker, Signals
 
 # Базовые параметры запроса к iTick.
@@ -31,9 +32,22 @@ KTYPE_TO_MILLISECONDS: dict[int, int] = {
     9: 604_800_000,
 }
 
+WARMUP_LIMIT = 1
+
+
+class ItickUnavailableError(RuntimeError):
+    def __init__(self, reason: str | None = None) -> None:
+        self.reason: str = reason or "unknown"
+
+        super().__init__("Сервис временно недоступен, возможно просрочен токен")
+
 
 class Itick:
-    def __init__(self, signal_checker: SignalChecker | None = None) -> None:
+    def __init__(
+        self,
+        signal_checker: SignalChecker | None = None,
+        filter_checker: FilterChecker | None = None,
+    ) -> None:
         environment: str = settings.ITICK_ENVIRONMENT.strip().upper()
         base_url: str = ITICK_FOREX_BASE_URLS.get(environment)
 
@@ -45,8 +59,23 @@ class Itick:
         self._signal_checker: SignalChecker = (
             signal_checker if signal_checker is not None else SignalChecker()
         )
+        self._filter_checker: FilterChecker = (
+            filter_checker if filter_checker is not None else FilterChecker()
+        )
 
-    def connect(self) -> None:
+    def connect(
+        self,
+        region: str,
+        code: str,
+        k_type: int,
+    ) -> None:
+        self._request_kline(
+            region=region,
+            code=code,
+            k_type=k_type,
+            limit=WARMUP_LIMIT,
+        )
+
         self._is_connected = True
 
     def fetch_candles(
@@ -55,38 +84,71 @@ class Itick:
         code: str,
         k_type: int,
     ) -> list[dict[str, float | int]]:
-        # Запрашиваем сырые Kline-данные.
         if not self._is_connected:
             raise RuntimeError("Client is not connected")
 
-        endpoint: str = f"{self._base_url}/kline"
-
-        response: requests.Response = requests.get(
-            endpoint,
-            params={
-                "region": region,
-                "code": code,
-                "kType": k_type,
-                "limit": 500,
-            },
-            headers={"accept": "application/json", "token": self._token},
-            timeout=45.0,
+        return self._request_kline(
+            region=region,
+            code=code,
+            k_type=k_type,
+            limit=500,
         )
 
-        response.raise_for_status()
-        payload = response.json()
+    def _request_kline(
+        self,
+        region: str,
+        code: str,
+        k_type: int,
+        limit: int,
+    ) -> list[dict[str, float | int]]:
+        endpoint: str = f"{self._base_url}/kline"
 
+        try:
+            response: requests.Response = requests.get(
+                endpoint,
+                params={
+                    "region": region,
+                    "code": code,
+                    "kType": k_type,
+                    "limit": limit,
+                },
+                headers={"accept": "application/json", "token": self._token},
+                timeout=45.0,
+            )
+        except requests.RequestException as exc:
+            raise ItickUnavailableError(str(exc)) from exc
+
+        if response.status_code == 401:
+            raise ItickUnavailableError(
+                f"401 Unauthorized for url: {response.url}",
+            )
+
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            raise ItickUnavailableError(
+                f"{response.status_code} {response.reason} for url: {response.url}",
+            ) from exc
+
+        payload = response.json()
         api_code = int(payload.get("code", -1))
 
         if api_code != 0:
-            raise RuntimeError(f"iTick API error: {payload.get('msg')}")
+            raise ItickUnavailableError(
+                f"iTick API error: {payload.get('msg')}",
+            )
 
         data = payload.get("data", [])
 
         if not isinstance(data, list):
-            raise RuntimeError("iTick response field 'data' is not a list")
+            raise ItickUnavailableError("iTick response field 'data' is not a list")
 
-        return [item for item in data if isinstance(item, dict)]
+        candles = [item for item in data if isinstance(item, dict)]
+
+        if not candles:
+            raise ItickUnavailableError("iTick returned empty candle data")
+
+        return candles
 
     def is_candle_closed(self, candle_open_time_ms: int, k_type: int) -> bool:
         # Проверяем, что бар уже завершился.
@@ -144,16 +206,61 @@ class Itick:
         result_df["EMA_4"] = ta.ema(result_df["close"], length=4)
         result_df["EMA_8"] = ta.ema(result_df["close"], length=8)
         result_df["EMA_16"] = ta.ema(result_df["close"], length=16)
+        result_df["EMA_75"] = ta.ema(result_df["close"], length=75)
+        result_df["RSI_15"] = ta.rsi(result_df["close"], length=15)
 
-        macd = ta.macd(result_df["close"])
+        result_df["weighted_close"] = (
+            result_df["high"] + result_df["low"] + result_df["close"] + result_df["close"]
+        ) / 4
+        result_df["EMA_4_WC"] = ta.ema(result_df["weighted_close"], length=4)
+        result_df["EMA_8_WC"] = ta.ema(result_df["weighted_close"], length=8)
 
-        if macd is not None and not macd.empty:
-            result_df = pd.concat([result_df, macd], axis=1)
+        # 2. Осцилляторы
+        stoch_5_3_3 = ta.stoch(
+            high=result_df["high"],
+            low=result_df["low"],
+            close=result_df["close"],
+            k=5,
+            d=3,
+            smooth_k=3,
+        )
+        stoch_7_5_3 = ta.stoch(
+            high=result_df["high"],
+            low=result_df["low"],
+            close=result_df["close"],
+            k=7,
+            d=5,
+            smooth_k=3,
+        )
+        result_df["STOCHk_5_3_3"] = stoch_5_3_3["STOCHk_5_3_3"]
+        result_df["STOCHk_7_5_3"] = stoch_7_5_3["STOCHk_7_5_3"]
+
+        macd = ta.macd(result_df["close"], fast=4, slow=5, signal=3)
+        result_df["MACDh_4_5_3"] = macd["MACDh_4_5_3"]
+
+        bbands = ta.bbands(result_df["close"], length=20, std=2)
+        bbm_series = None
+
+        if "BBM_20_2.0" in bbands.columns:
+            bbm_series = bbands["BBM_20_2.0"]
+        elif "BBM_20_2" in bbands.columns:
+            bbm_series = bbands["BBM_20_2"]
+        elif bbands.shape[1] >= 2:
+            bbm_series = bbands.iloc[:, 1]
+
+        result_df["BBM_20_2.0"] = bbm_series
 
         return result_df
 
     def check_all(self, df: pd.DataFrame) -> Signals:
         return self._signal_checker.check_all(df)
+
+    def check_filters(
+        self,
+        df: pd.DataFrame,
+        filters: list[FilterName] | None = None,
+    ) -> dict[FilterName, FilterFlags]:
+        return self._filter_checker.check(df, filters)
 
     def extract_fresh_candles(self, df: pd.DataFrame):
         clean = df.dropna(subset=["EMA_4", "EMA_8"])
@@ -180,6 +287,12 @@ class Itick:
 
             if pd.notna(row.get("EMA_16")):
                 item["EMA_16"] = float(row["EMA_16"])
+
+            if pd.notna(row.get("EMA_4_WC")):
+                item["EMA_4_WC"] = float(row["EMA_4_WC"])
+
+            if pd.notna(row.get("EMA_8_WC")):
+                item["EMA_8_WC"] = float(row["EMA_8_WC"])
 
             if pd.notna(row.get("close")):
                 item["close"] = float(row["close"])

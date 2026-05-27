@@ -14,7 +14,7 @@ class CrossSignalFlags(TypedDict):
 class Signals(TypedDict):
     ema_4_8: CrossSignalFlags
     ema_8_16: CrossSignalFlags
-    macd: CrossSignalFlags
+    ema_wc_4_8: CrossSignalFlags
     has_some_signal: bool
 
 class SignalChecker:
@@ -76,24 +76,24 @@ class SignalChecker:
     def check_ema_8_16(self, df: pd.DataFrame) -> CrossSignalFlags:
         return self._pair_cross_bullish_bearish(df, "EMA_8", "EMA_16")
 
-    def check_macd(self, df: pd.DataFrame) -> CrossSignalFlags:
-        return self._pair_cross_bullish_bearish(df, "MACD_12_26_9", "MACDs_12_26_9")
+    def check_ema_wc_4_8(self, df: pd.DataFrame) -> CrossSignalFlags:
+        return self._pair_cross_bullish_bearish(df, "EMA_4_WC", "EMA_8_WC")
 
     def check_all(self, df: pd.DataFrame) -> Signals:
         ema_4_8 = self.check_ema_4_8(df)
         ema_8_16 = self.check_ema_8_16(df)
-        macd = self.check_macd(df)
+        ema_wc_4_8 = self.check_ema_wc_4_8(df)
 
         return {
             "ema_4_8": ema_4_8,
             "ema_8_16": ema_8_16,
-            "macd": macd,
+            "ema_wc_4_8": ema_wc_4_8,
             "has_some_signal": (
                 ema_4_8["bullish"]
                 or ema_4_8["bearish"]
                 or ema_8_16["bullish"]
                 or ema_8_16["bearish"]
-                or macd["bullish"]
-                or macd["bearish"]
+                or ema_wc_4_8["bullish"]
+                or ema_wc_4_8["bearish"]
             ),
         }
