@@ -238,6 +238,7 @@ class Answer:
         result: MainAnalysisResult,
         enabled_signal_keys: frozenset[str],
         enabled_filter_keys: frozenset[str],
+        preset_name: str | None = None,
     ) -> str:
         signals_block = Answer._format_signals_block(
             result["signals"],
@@ -248,10 +249,15 @@ class Answer:
             enabled_filter_keys,
         )
 
-        return "\n".join(
+        parts = [
+            escape_markdown("Сигнал 🚨", version=2),
+            "",
+        ]
+        if preset_name:
+            parts.append(escape_markdown(f"Пресет: {preset_name}", version=2))
+            parts.append("")
+        parts.extend(
             [
-                escape_markdown("Сигнал 🚨", version=2),
-                "",
                 escape_markdown(f"Пара: {result['indicator']}", version=2),
                 "",
                 escape_markdown("Индикаторы (Signals):", version=2),
@@ -264,12 +270,15 @@ class Answer:
                 Answer._format_candles(result["fresh_candles"]),
             ]
         )
+
+        return "\n".join(parts)
 
     @staticmethod
     def data_snapshot(
         result: MainAnalysisResult,
         enabled_signal_keys: frozenset[str],
         enabled_filter_keys: frozenset[str],
+        preset_name: str | None = None,
     ) -> str:
         signals_block = Answer._format_signals_block(
             result["signals"],
@@ -280,7 +289,11 @@ class Answer:
             enabled_filter_keys,
         )
 
-        return "\n".join(
+        parts = []
+        if preset_name:
+            parts.append(escape_markdown(f"Пресет: {preset_name}", version=2))
+            parts.append("")
+        parts.extend(
             [
                 escape_markdown(f"Пара: {result['indicator']}", version=2),
                 "",
@@ -294,3 +307,5 @@ class Answer:
                 Answer._format_candles(result["fresh_candles"]),
             ]
         )
+
+        return "\n".join(parts)

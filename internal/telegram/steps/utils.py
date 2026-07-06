@@ -1,19 +1,19 @@
 from telegram.ext import ContextTypes
 
-from internal.telegram import options, texts, ui
+from internal.storage.preset_repository import UserSignalPresetRepository
+from internal.telegram import texts, ui
 from internal.telegram.monitor_job import MonitorJob
 from internal.telegram.state import SessionState, SessionStateStore
-from internal.telegram.steps.flow import MONITORING, SELECT_PAIR
+from internal.telegram.steps.flow import MONITORING, SELECT_PRESETS
 
 
-async def start_monitoring(
+async def start_monitoring_presets(
     update,
     context: ContextTypes.DEFAULT_TYPE,
     state_store: SessionStateStore,
+    preset_repository: UserSignalPresetRepository,
     pair_code: str,
-    k_type: int,
-    selected_signals: set[str],
-    selected_filters: frozenset[str],
+    selected_preset_ids: set[int],
 ) -> int:
     user = update.effective_user
 
@@ -23,27 +23,47 @@ async def start_monitoring(
             reply_markup=ui.pair_keyboard(),
         )
 
-        return SELECT_PAIR
+        return SELECT_PRESETS
 
     telegram_user_id = int(user.id)
+    presets_all = preset_repository.list_presets(telegram_user_id)
+    presets = [p for p in presets_all if int(p["id"]) in selected_preset_ids]
+
+    if not presets:
+        await update.message.reply_text(
+            texts.PRESET_NEED_SELECT,
+            reply_markup=ui.preset_selection_keyboard(presets_all, set()),
+        )
+        return SELECT_PRESETS
+
+    # нормализуем наборы
+    normalized = []
+    for p in presets:
+        normalized.append(
+            {
+                "id": int(p["id"]),
+                "name": str(p["name"]),
+                "k_type": int(p["k_type"]),
+                "signal_keys": set(p["signal_ids"]),
+                "filter_keys": set(p["filter_ids"]),
+                "prev_by_key": {k: False for k in p["signal_ids"]},
+            }
+        )
 
     MonitorJob(
         context.job_queue,
         update.effective_chat.id,
     ).add(
         pair_code=pair_code,
-        k_type=k_type,
         telegram_user_id=telegram_user_id,
-        enabled_signal_keys=frozenset(selected_signals),
-        enabled_filter_keys=selected_filters,
+        presets=normalized,
     )
 
     state_store.save(context, SessionState(ai_cooldown_until=0.0))
 
     await update.message.reply_text(
         f"Мониторинг каждые {MonitorJob.INTERVAL_SEC} с.\n{pair_code}\n"
-        f"Сигналы: {options.summarize_signal_keys(selected_signals)}\n"
-        f"Фильтры: {options.summarize_filter_keys(selected_filters)}",
+        f"Пресеты: {', '.join(p['name'] for p in normalized)}",
         reply_markup=ui.monitoring_keyboard(),
     )
 

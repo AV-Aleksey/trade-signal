@@ -1,9 +1,11 @@
 import time
 
 from telegram.constants import ParseMode
+from telegram.helpers import escape_markdown
 from telegram.ext import ContextTypes
 
 from internal.forex.itick import ItickUnavailableError, MissingItickTokenError
+from internal.storage.preset_repository import UserSignalPresetRepository
 from internal.telegram import texts, ui
 from internal.telegram.monitor_job import MonitorJob
 from internal.telegram.services import (
@@ -13,7 +15,7 @@ from internal.telegram.services import (
     DataSnapshotService,
 )
 from internal.telegram.state import SessionStateStore
-from internal.telegram.steps.flow import MONITORING
+from internal.telegram.steps.flow import MONITORING, SELECT_PRESETS
 
 AI_COOLDOWN_SEC = 60.0
 
@@ -72,6 +74,7 @@ def make_monitoring_handler(
     restart_handler,
     ai_service: AiReportService,
     snapshot_service: DataSnapshotService,
+    preset_repository: UserSignalPresetRepository,
 ):
     async def handle_monitoring(update, context: ContextTypes.DEFAULT_TYPE) -> int:
         message = update.message
@@ -128,7 +131,7 @@ def make_monitoring_handler(
 
                 return await restart_handler(update, context)
 
-            pair_code, k_type, _enabled_keys, _enabled_filters = params
+            pair_code, presets = params
             state.ai_cooldown_until = now + AI_COOLDOWN_SEC
             state_store.save(context, state)
 
@@ -137,13 +140,21 @@ def make_monitoring_handler(
                 reply_markup=ui.monitoring_keyboard(),
             )
 
+            first_preset = presets[0] if presets else None
+            if first_preset is None:
+                await message.reply_text(
+                    texts.PRESET_NEED_SELECT,
+                    reply_markup=ui.monitoring_keyboard(),
+                )
+                return MONITORING
+
             context.application.create_task(
                 _deliver_ai_report(
                     context.application,
                     update.effective_chat.id,
                     ai_service,
                     pair_code,
-                    k_type,
+                    int(first_preset["k_type"]),
                     int(user.id),
                 ),
                 update=update,
@@ -157,7 +168,7 @@ def make_monitoring_handler(
             if params is None:
                 return await restart_handler(update, context)
 
-            pair_code, k_type, enabled_keys, enabled_filters = params
+            pair_code, presets = params
             user = update.effective_user
 
             if user is None:
@@ -169,15 +180,20 @@ def make_monitoring_handler(
                 return await restart_handler(update, context)
 
             try:
-                snapshot = await snapshot_service.fetch(
-                    pair_code,
-                    k_type,
-                    enabled_filters,
-                    enabled_keys,
-                    int(user.id),
-                )
+                parts = []
+                for preset in presets:
+                    header = f"*{escape_markdown(str(preset['name']), version=2)}*"
+                    snapshot = await snapshot_service.fetch(
+                        pair_code,
+                        int(preset["k_type"]),
+                        frozenset(preset["filter_keys"]),
+                        frozenset(preset["signal_keys"]),
+                        int(user.id),
+                    )
+                    parts.append(f"{header}\n{snapshot}")
+
                 await message.reply_text(
-                    snapshot,
+                    "\n\n".join(parts),
                     parse_mode=ParseMode.MARKDOWN_V2,
                     reply_markup=ui.monitoring_keyboard(),
                 )

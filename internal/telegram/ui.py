@@ -10,6 +10,8 @@ KB_AI = "🤖 Анализ ИИ"
 KB_REQUEST_DATA = "📊 Запросить данные"
 KB_SIGNAL_SELECT_ALL = "☑️ Выбрать все"
 KB_SIGNAL_DONE = "✅ Готово"
+KB_PRESET_ADD = "➕ Добавить сигнал"
+KB_PRESET_DONE = "✅ Готово (мониторинг)"
 
 
 def monitoring_keyboard() -> ReplyKeyboardMarkup:
@@ -107,6 +109,45 @@ def filter_selection_keyboard(selected: set[str]) -> ReplyKeyboardMarkup:
             KeyboardButton(text=KB_SIGNAL_DONE),
         ],
     )
+    rows.append([KeyboardButton(text=KB_RESTART)])
+
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def preset_selection_keyboard(
+    presets: list[dict],
+    selected_ids: set[int],
+) -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = []
+    for preset in presets:
+        pid = int(preset["id"])
+        name = str(preset["name"])
+        k_type = preset["k_type"]
+        mark = "✓ " if pid in selected_ids else "◻ "
+        rows.append([KeyboardButton(text=f"{mark}{name} (TF {k_type})")])
+
+    rows.append(
+        [
+            KeyboardButton(text=KB_PRESET_ADD),
+            KeyboardButton(text=KB_PRESET_DONE),
+        ]
+    )
+    rows.append([KeyboardButton(text=KB_RESTART)])
+
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def preset_manage_keyboard(
+    presets: list[dict],
+) -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = []
+    for preset in presets:
+        name = str(preset["name"])
+        k_type = preset["k_type"]
+        rows.append([KeyboardButton(text=f"{name} (TF {k_type})")])
+        rows.append([KeyboardButton(text=f"🗑 {name}")])
+
+    rows.append([KeyboardButton(text=KB_PRESET_ADD)])
     rows.append([KeyboardButton(text=KB_RESTART)])
 
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)

@@ -40,7 +40,10 @@ class ItickUnavailableError(RuntimeError):
     def __init__(self, reason: str | None = None) -> None:
         self.reason: str = reason or "unknown"
 
-        super().__init__("Сервис временно недоступен, возможно просрочен токен")
+        super().__init__(
+            "Сервис временно недоступен, возможно просрочен токен "
+            "или превышен лимит запросов в минуту"
+        )
 
 
 class MissingItickTokenError(RuntimeError):
@@ -68,9 +71,6 @@ class Itick:
             resolved_token = (
                 ItickTokenRepository().get_itick_token(telegram_user_id) or ""
             ).strip()
-
-        if not resolved_token:
-            resolved_token = settings.ITICK_API_KEY.strip()
 
         if not resolved_token:
             raise MissingItickTokenError()

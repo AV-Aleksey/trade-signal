@@ -51,11 +51,8 @@ def _is_signal_blocked_by_filters(
 
 class _MonitorData(TypedDict):
     pair_code: str
-    k_type: int
     telegram_user_id: int
-    enabled_signal_keys: frozenset[str]
-    enabled_filter_keys: frozenset[str]
-    prev_active_by_key: dict[str, bool]
+    presets: list[dict]  # [{id,name,k_type,signal_keys,set filter_keys,set prev_by_key:dict}]
 
 
 class MonitorJob:
@@ -78,20 +75,15 @@ class MonitorJob:
     def add(
         self,
         pair_code: str,
-        k_type: int,
         telegram_user_id: int,
-        enabled_signal_keys: frozenset[str],
-        enabled_filter_keys: frozenset[str],
+        presets: list[dict],
     ) -> None:
         self.remove()
 
         data: _MonitorData = {
             "pair_code": pair_code,
-            "k_type": k_type,
             "telegram_user_id": telegram_user_id,
-            "enabled_signal_keys": enabled_signal_keys,
-            "enabled_filter_keys": enabled_filter_keys,
-            "prev_active_by_key": {k: False for k in enabled_signal_keys},
+            "presets": presets,
         }
 
         self._job_queue.run_once(
@@ -119,7 +111,7 @@ class MonitorJob:
             job.schedule_removal()
 
     @property
-    def params(self) -> tuple[str, int, frozenset[str], frozenset[str]] | None:
+    def params(self) -> tuple[str, list[dict]] | None:
         jobs = self._job_queue.get_jobs_by_name(self._name)
 
         if not jobs:
@@ -129,9 +121,7 @@ class MonitorJob:
 
         return (
             data["pair_code"],
-            data["k_type"],
-            data["enabled_signal_keys"],
-            data["enabled_filter_keys"],
+            data["presets"],
         )
 
     @staticmethod
@@ -140,43 +130,47 @@ class MonitorJob:
         data = job.data
 
         try:
-            result = main(
-                code=data["pair_code"],
-                k_type=data["k_type"],
-                enabled_filter_keys=data["enabled_filter_keys"],
-                telegram_user_id=data["telegram_user_id"],
-            )
+            user_id = data["telegram_user_id"]
+            pair_code = data["pair_code"]
+            presets = data["presets"]
 
-            signals = result["signals"]
-            filters = result["filters"]
-            enabled = data["enabled_signal_keys"]
-            prev_by = data["prev_active_by_key"]
+            for preset in presets:
+                k_type = int(preset["k_type"])
+                signal_keys = set(preset["signal_keys"])
+                filter_keys = set(preset["filter_keys"])
+                prev_by = preset.get("prev_by_key") or {k: False for k in signal_keys}
 
-            has_rising_edge = False
-
-            for key in enabled:
-                now = _is_cross_active(signals, key)
-                was = prev_by.get(key, False)
-
-                if now and not was and not _is_signal_blocked_by_filters(signals, key, filters):
-                    has_rising_edge = True
-
-                    break
-
-            if has_rising_edge:
-                await context.bot.send_message(
-                    chat_id=job.chat_id,
-                    text=Answer.monitor_alert(
-                        result,
-                        data["enabled_signal_keys"],
-                        data["enabled_filter_keys"],
-                    ),
-                    parse_mode=ParseMode.MARKDOWN_V2,
+                result = main(
+                    code=pair_code,
+                    k_type=k_type,
+                    enabled_filter_keys=filter_keys,
+                    telegram_user_id=user_id,
                 )
 
-            data["prev_active_by_key"] = {
-                k: _is_cross_active(signals, k) for k in enabled
-            }
+                signals = result["signals"]
+                filters = result["filters"]
+
+                has_rising = False
+                for key in signal_keys:
+                    now = _is_cross_active(signals, key)
+                    was = prev_by.get(key, False)
+                    if now and not was and not _is_signal_blocked_by_filters(signals, key, filters):
+                        has_rising = True
+                        break
+
+                if has_rising:
+                    await context.bot.send_message(
+                        chat_id=job.chat_id,
+                        text=Answer.monitor_alert(
+                            result,
+                            signal_keys,
+                            filter_keys,
+                            preset_name=preset.get("name", ""),
+                        ),
+                        parse_mode=ParseMode.MARKDOWN_V2,
+                    )
+
+                preset["prev_by_key"] = {k: _is_cross_active(signals, k) for k in signal_keys}
         except MissingItickTokenError:
             MonitorJob(context.job_queue, job.chat_id).remove()
             await context.bot.send_message(
