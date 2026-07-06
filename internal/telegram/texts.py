@@ -1,4 +1,7 @@
 START_PAIR_PROMPT = "Выберите валютную пару кнопкой или введите вручную в формате forex GB/XXXXXX"
+ITICK_TOKEN_PROMPT = "Отправьте iTick токен одним сообщением."
+ITICK_TOKEN_SAVED = "Токен iTick сохранён."
+ITICK_TOKEN_REQUIRED = "Сначала добавьте iTick токен через команду /itick."
 SELECT_TICK_PROMPT = "Выберите таймфрейм кнопкой"
 INVALID_TICK_PROMPT = "Выберите таймфрейм кнопкой."
 SELECT_SIGNAL_PROMPT = (

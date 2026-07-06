@@ -22,10 +22,11 @@ def main(
     code: str = DEFAULT_ITICK_CODE,
     k_type: int = DEFAULT_ITICK_K_TYPE,
     enabled_filter_keys: Sequence[FilterName] | None = None,
+    telegram_user_id: int | None = None,
     client: Itick | None = None,
 ) -> MainAnalysisResult:
     if client is None:
-        client = Itick()
+        client = Itick(telegram_user_id=telegram_user_id)
 
     region, code_name = code.split('/')
 

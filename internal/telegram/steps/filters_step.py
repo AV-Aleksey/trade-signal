@@ -6,7 +6,10 @@ from internal.telegram.steps import utils
 from internal.telegram.steps.flow import MONITORING, SELECT_FILTERS, SELECT_SIGNALS
 
 
-def make_filters_handler(state_store: SessionStateStore, restart_handler):
+def make_filters_handler(
+    state_store: SessionStateStore,
+    restart_handler,
+):
     async def handle_filters(update, context: ContextTypes.DEFAULT_TYPE) -> int:
         message = update.message
 

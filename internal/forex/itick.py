@@ -10,6 +10,7 @@ import requests
 from internal.config import settings
 from internal.forex.filter import FilterChecker, FilterFlags, FilterName
 from internal.forex.signal import SignalChecker, Signals
+from internal.storage.itick_token_repository import ItickTokenRepository
 
 # Базовые параметры запроса к iTick.
 ITICK_FOREX_BASE_URLS = {
@@ -42,9 +43,16 @@ class ItickUnavailableError(RuntimeError):
         super().__init__("Сервис временно недоступен, возможно просрочен токен")
 
 
+class MissingItickTokenError(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("Не найден iTick токен. Используй /itick для сохранения токена.")
+
+
 class Itick:
     def __init__(
         self,
+        telegram_user_id: int | None = None,
+        token: str | None = None,
         signal_checker: SignalChecker | None = None,
         filter_checker: FilterChecker | None = None,
     ) -> None:
@@ -54,7 +62,20 @@ class Itick:
         print("Запросы будут отправляться на URL: ", base_url)
 
         self._base_url: str = base_url.rstrip("/")
-        self._token: str = settings.ITICK_API_KEY
+        resolved_token = (token or "").strip()
+
+        if not resolved_token and telegram_user_id is not None:
+            resolved_token = (
+                ItickTokenRepository().get_itick_token(telegram_user_id) or ""
+            ).strip()
+
+        if not resolved_token:
+            resolved_token = settings.ITICK_API_KEY.strip()
+
+        if not resolved_token:
+            raise MissingItickTokenError()
+
+        self._token: str = resolved_token
         self._is_connected: bool = False
         self._signal_checker: SignalChecker = (
             signal_checker if signal_checker is not None else SignalChecker()

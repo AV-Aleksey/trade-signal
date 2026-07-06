@@ -7,6 +7,8 @@ class Settings(BaseSettings):
 
     ITICK_API_KEY: str = ""
     ITICK_ENVIRONMENT: str = "DEV"
+    TOKEN_ENCRYPTION_SECRET: str = ""
+    SQLITE_DB_PATH: str = "./data/trade_signal.db"
 
     BOT_API_KEY: str = ""
 

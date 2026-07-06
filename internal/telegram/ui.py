@@ -55,6 +55,14 @@ def tick_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def token_input_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton(text=KB_RESTART)]],
+        resize_keyboard=True,
+        input_field_placeholder="Вставьте iTick токен",
+    )
+
+
 def _chunk_buttons(items: list[dict[str, str]], selected: set[str]) -> list[list[KeyboardButton]]:
     chunk_size = 3
     rows: list[list[KeyboardButton]] = []

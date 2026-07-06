@@ -7,9 +7,11 @@ from telegram.ext import (
 )
 
 from internal.config import settings
+from internal.storage.itick_token_repository import ItickTokenRepository
 from internal.telegram.services import AiReportService, DataSnapshotService
 from internal.telegram.state import SessionStateStore
 from internal.telegram.steps.flow import (
+    INPUT_ITICK_TOKEN,
     MONITORING,
     SELECT_FILTERS,
     SELECT_PAIR,
@@ -23,11 +25,15 @@ from internal.telegram.steps.pair_step import make_pair_handler
 from internal.telegram.steps.signals_step import make_signals_handler
 from internal.telegram.steps.start_step import make_start_handler
 from internal.telegram.steps.tick_step import make_tick_handler
+from internal.telegram.steps.token_step import make_itick_entry_handler, make_token_handler
 
 
 async def _post_init(application: Application) -> None:
     await application.bot.set_my_commands(
-        [BotCommand("start", "Начать работу с ботом")],
+        [
+            BotCommand("start", "Начать работу с ботом"),
+            BotCommand("itick", "Сохранить iTick токен"),
+        ],
     )
     await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
@@ -44,11 +50,14 @@ def build_application(
     default_filter_keys = default_filter_keys or frozenset()
 
     state_store = SessionStateStore()
+    itick_token_repository = ItickTokenRepository()
     ai_service = AiReportService(settings.OPEN_ROUTER_API_KEY)
     snapshot_service = DataSnapshotService()
 
     start_handler = make_start_handler(state_store)
     pair_handler = make_pair_handler(state_store)
+    itick_entry_handler = make_itick_entry_handler()
+    token_handler = make_token_handler(itick_token_repository)
     tick_handler = make_tick_handler(state_store, start_handler)
     signals_handler = make_signals_handler(
         state_store,
@@ -56,7 +65,10 @@ def build_application(
         filters_enabled,
         default_filter_keys,
     )
-    filters_handler = make_filters_handler(state_store, start_handler)
+    filters_handler = make_filters_handler(
+        state_store,
+        start_handler,
+    )
     monitoring_handler = make_monitoring_handler(
         state_store,
         start_handler,
@@ -70,10 +82,17 @@ def build_application(
                 "start",
                 start_handler,
             ),
+            CommandHandler(
+                "itick",
+                itick_entry_handler,
+            ),
         ],
         states={
             SELECT_PAIR: [
                 MessageHandler(TEXT_MESSAGE_FILTER, pair_handler),
+            ],
+            INPUT_ITICK_TOKEN: [
+                MessageHandler(TEXT_MESSAGE_FILTER, token_handler),
             ],
             SELECT_TICK: [
                 MessageHandler(TEXT_MESSAGE_FILTER, tick_handler),

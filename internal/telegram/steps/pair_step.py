@@ -13,7 +13,9 @@ def make_pair_handler(state_store: SessionStateStore):
             return SELECT_TICK
 
         state = state_store.load(context)
-        state.pair_code = message.text.strip()
+        text = message.text.strip()
+
+        state.pair_code = text
         state_store.save(context, state)
 
         await message.reply_text(

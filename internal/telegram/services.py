@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from internal.ai.main import OpenRouter, OpenRouterRateLimitError
 from internal.ai.ta_ai import TA_SYSTEM_PROMPT, build_ta_user_message
-from internal.forex.itick import ItickUnavailableError
+from internal.forex.itick import ItickUnavailableError, MissingItickTokenError
 from internal.forex.main import main
 from internal.telegram.answer import Answer
 
@@ -31,9 +31,17 @@ class AiReportService:
     def has_api_key(self) -> bool:
         return bool(self._api_key.strip())
 
-    @staticmethod
-    def _prepare_user_message(pair_code: str, k_type: int) -> str:
-        result = main(code=pair_code, k_type=k_type)
+    def _prepare_user_message(
+        self,
+        pair_code: str,
+        k_type: int,
+        telegram_user_id: int,
+    ) -> str:
+        result = main(
+            code=pair_code,
+            k_type=k_type,
+            telegram_user_id=telegram_user_id,
+        )
 
         return build_ta_user_message(
             pair=pair_code,
@@ -41,14 +49,22 @@ class AiReportService:
             df=result["data_frame"],
         )
 
-    async def generate(self, pair_code: str, k_type: int) -> AiReportResult:
+    async def generate(
+        self,
+        pair_code: str,
+        k_type: int,
+        telegram_user_id: int,
+    ) -> AiReportResult:
         try:
             user_block = await asyncio.to_thread(
                 self._prepare_user_message,
                 pair_code,
                 k_type,
+                telegram_user_id,
             )
         except ItickUnavailableError:
+            raise
+        except MissingItickTokenError:
             raise
         except Exception as exc:  # pragma: no cover - defensive
             raise AiReportError(f"Данные для ИИ: {exc}") from exc
@@ -75,6 +91,7 @@ class DataSnapshotService:
         k_type: int,
         enabled_filters: frozenset[str],
         enabled_signals: frozenset[str],
+        telegram_user_id: int,
     ) -> str:
         try:
             result = await asyncio.to_thread(
@@ -82,6 +99,7 @@ class DataSnapshotService:
                 pair_code,
                 k_type,
                 enabled_filters,
+                telegram_user_id,
             )
         except ItickUnavailableError:
             raise

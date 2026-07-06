@@ -3,7 +3,7 @@ import time
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from internal.forex.itick import ItickUnavailableError
+from internal.forex.itick import ItickUnavailableError, MissingItickTokenError
 from internal.telegram import texts, ui
 from internal.telegram.monitor_job import MonitorJob
 from internal.telegram.services import (
@@ -24,9 +24,10 @@ async def _deliver_ai_report(
     service: AiReportService,
     pair_code: str,
     k_type: int,
+    telegram_user_id: int,
 ) -> None:
     try:
-        result = await service.generate(pair_code, k_type)
+        result = await service.generate(pair_code, k_type, telegram_user_id)
         await application.bot.send_message(
             chat_id=chat_id,
             text=result.text,
@@ -37,6 +38,13 @@ async def _deliver_ai_report(
         await application.bot.send_message(
             chat_id=chat_id,
             text=str(exc),
+            reply_markup=ui.pair_keyboard(),
+        )
+    except MissingItickTokenError:
+        MonitorJob(application.job_queue, chat_id).remove()
+        await application.bot.send_message(
+            chat_id=chat_id,
+            text=texts.ITICK_TOKEN_REQUIRED,
             reply_markup=ui.pair_keyboard(),
         )
     except AiReportRateLimitError as exc:
@@ -72,7 +80,10 @@ def make_monitoring_handler(
             return MONITORING
 
         text = message.text.strip()
-        monitor = MonitorJob(context.job_queue, update.effective_chat.id)
+        monitor = MonitorJob(
+            context.job_queue,
+            update.effective_chat.id,
+        )
 
         if text == ui.KB_STOP:
             monitor.remove()
@@ -107,6 +118,16 @@ def make_monitoring_handler(
             if params is None:
                 return await restart_handler(update, context)
 
+            user = update.effective_user
+
+            if user is None:
+                await message.reply_text(
+                    texts.ITICK_TOKEN_REQUIRED,
+                    reply_markup=ui.pair_keyboard(),
+                )
+
+                return await restart_handler(update, context)
+
             pair_code, k_type, _enabled_keys, _enabled_filters = params
             state.ai_cooldown_until = now + AI_COOLDOWN_SEC
             state_store.save(context, state)
@@ -123,6 +144,7 @@ def make_monitoring_handler(
                     ai_service,
                     pair_code,
                     k_type,
+                    int(user.id),
                 ),
                 update=update,
             )
@@ -136,6 +158,15 @@ def make_monitoring_handler(
                 return await restart_handler(update, context)
 
             pair_code, k_type, enabled_keys, enabled_filters = params
+            user = update.effective_user
+
+            if user is None:
+                await message.reply_text(
+                    texts.ITICK_TOKEN_REQUIRED,
+                    reply_markup=ui.pair_keyboard(),
+                )
+
+                return await restart_handler(update, context)
 
             try:
                 snapshot = await snapshot_service.fetch(
@@ -143,11 +174,18 @@ def make_monitoring_handler(
                     k_type,
                     enabled_filters,
                     enabled_keys,
+                    int(user.id),
                 )
                 await message.reply_text(
                     snapshot,
                     parse_mode=ParseMode.MARKDOWN_V2,
                     reply_markup=ui.monitoring_keyboard(),
+                )
+            except MissingItickTokenError:
+                monitor.remove()
+                await message.reply_text(
+                    texts.ITICK_TOKEN_REQUIRED,
+                    reply_markup=ui.pair_keyboard(),
                 )
             except ItickUnavailableError as exc:
                 monitor.remove()

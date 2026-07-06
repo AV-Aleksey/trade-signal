@@ -4,10 +4,11 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, JobQueue
 
 from internal.forex.filter import FilterFlags
-from internal.forex.itick import ItickUnavailableError
+from internal.forex.itick import ItickUnavailableError, MissingItickTokenError
 from internal.forex.main import main
 from internal.forex.signal import CrossSignalFlags, Signals
 from internal.telegram.answer import Answer
+from internal.telegram import texts
 
 
 def _cross_flags_for_signal_key(signals: Signals, key: str) -> CrossSignalFlags | None:
@@ -51,6 +52,7 @@ def _is_signal_blocked_by_filters(
 class _MonitorData(TypedDict):
     pair_code: str
     k_type: int
+    telegram_user_id: int
     enabled_signal_keys: frozenset[str]
     enabled_filter_keys: frozenset[str]
     prev_active_by_key: dict[str, bool]
@@ -60,7 +62,11 @@ class MonitorJob:
     INTERVAL_SEC = 60
     IMMEDIATE_JOB_SUFFIX = ":immediate"
 
-    def __init__(self, job_queue: JobQueue, chat_id: int) -> None:
+    def __init__(
+        self,
+        job_queue: JobQueue,
+        chat_id: int,
+    ) -> None:
         self._job_queue = job_queue
         self._chat_id = chat_id
         self._name = str(chat_id)
@@ -73,6 +79,7 @@ class MonitorJob:
         self,
         pair_code: str,
         k_type: int,
+        telegram_user_id: int,
         enabled_signal_keys: frozenset[str],
         enabled_filter_keys: frozenset[str],
     ) -> None:
@@ -81,6 +88,7 @@ class MonitorJob:
         data: _MonitorData = {
             "pair_code": pair_code,
             "k_type": k_type,
+            "telegram_user_id": telegram_user_id,
             "enabled_signal_keys": enabled_signal_keys,
             "enabled_filter_keys": enabled_filter_keys,
             "prev_active_by_key": {k: False for k in enabled_signal_keys},
@@ -136,6 +144,7 @@ class MonitorJob:
                 code=data["pair_code"],
                 k_type=data["k_type"],
                 enabled_filter_keys=data["enabled_filter_keys"],
+                telegram_user_id=data["telegram_user_id"],
             )
 
             signals = result["signals"]
@@ -168,6 +177,12 @@ class MonitorJob:
             data["prev_active_by_key"] = {
                 k: _is_cross_active(signals, k) for k in enabled
             }
+        except MissingItickTokenError:
+            MonitorJob(context.job_queue, job.chat_id).remove()
+            await context.bot.send_message(
+                chat_id=job.chat_id,
+                text=texts.ITICK_TOKEN_REQUIRED,
+            )
         except ItickUnavailableError as exc:
             MonitorJob(context.job_queue, job.chat_id).remove()
             await context.bot.send_message(
