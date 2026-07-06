@@ -128,7 +128,6 @@ def preset_selection_keyboard(
 
     rows.append(
         [
-            KeyboardButton(text=KB_PRESET_ADD),
             KeyboardButton(text=KB_PRESET_DONE),
         ]
     )

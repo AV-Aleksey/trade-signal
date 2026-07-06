@@ -129,6 +129,16 @@ celerybeat.pid
 
 # Environments
 .env
+/data
+/bin/build-and-run.sh
+/Makefile
+*.swp
+*.swo
+*.swn
+*.swm
+*.sqlite
+*.db
+*.db-journal
 .venv
 env/
 venv/

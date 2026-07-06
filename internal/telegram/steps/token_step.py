@@ -1,12 +1,14 @@
 from telegram.ext import ContextTypes
 
 from internal.storage.itick_token_repository import ItickTokenRepository
+from internal.telegram.auth import AuthService
 from internal.telegram import texts, ui
 from internal.telegram.steps.flow import INPUT_ITICK_TOKEN, SELECT_PAIR
 
 
 def make_token_handler(
     itick_token_repository: ItickTokenRepository,
+    auth_service: AuthService,
 ):
     async def handle_token(update, context: ContextTypes.DEFAULT_TYPE) -> int:
         message = update.message
@@ -26,9 +28,9 @@ def make_token_handler(
 
         user = update.effective_user
 
-        if user is None:
+        if user is None or not auth_service.is_authorized(int(user.id)):
             await message.reply_text(
-                texts.ITICK_TOKEN_REQUIRED,
+                "🚫 Доступ запрещён. Выполните /auth и отправьте токен.",
                 reply_markup=ui.pair_keyboard(),
             )
 
@@ -57,8 +59,16 @@ def make_token_handler(
     return handle_token
 
 
-def make_itick_entry_handler():
+def make_itick_entry_handler(auth_service: AuthService):
     async def handle_itick_entry(update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.effective_user
+        if user is None or not auth_service.is_authorized(int(user.id)):
+            await update.message.reply_text(
+                "🚫 Доступ запрещён. Выполните /auth и отправьте токен.",
+                reply_markup=ui.pair_keyboard(),
+            )
+            return SELECT_PAIR
+
         message = update.message
 
         if message is None:

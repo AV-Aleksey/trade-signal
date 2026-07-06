@@ -2,6 +2,7 @@ from telegram.ext import ContextTypes
 
 from internal.storage.preset_repository import UserSignalPresetRepository
 from internal.telegram import texts, ui
+from internal.telegram.auth import AuthService
 from internal.telegram.state import SessionStateStore
 from internal.telegram.steps.flow import (
     PRESET_CREATE_FILTERS,
@@ -26,15 +27,19 @@ def _build_preset_keyboard(
     return presets, ui.preset_selection_keyboard(presets, selected_ids)
 
 
-def make_signals_entry_handler(state_store: SessionStateStore, repo: UserSignalPresetRepository):
+def make_signals_entry_handler(
+    state_store: SessionStateStore,
+    repo: UserSignalPresetRepository,
+    auth_service: AuthService,
+):
     async def handle_entry(update, context: ContextTypes.DEFAULT_TYPE) -> int:
         message = update.message
         if message is None:
             return SELECT_PRESETS
         user = update.effective_user
-        if user is None:
+        if user is None or not auth_service.is_authorized(int(user.id)):
             await message.reply_text(
-                texts.ITICK_TOKEN_REQUIRED,
+                "🚫 Доступ запрещён. Выполните /auth и отправьте токен.",
                 reply_markup=ui.pair_keyboard(),
             )
             return SELECT_PRESETS
@@ -60,7 +65,11 @@ def make_signals_entry_handler(state_store: SessionStateStore, repo: UserSignalP
     return handle_entry
 
 
-def make_preset_menu_handler(state_store: SessionStateStore, repo: UserSignalPresetRepository):
+def make_preset_menu_handler(
+    state_store: SessionStateStore,
+    repo: UserSignalPresetRepository,
+    auth_service: AuthService,
+):
     async def handle_presets(update, context: ContextTypes.DEFAULT_TYPE) -> int:
         message = update.message
 
@@ -69,9 +78,9 @@ def make_preset_menu_handler(state_store: SessionStateStore, repo: UserSignalPre
 
         user = update.effective_user
 
-        if user is None:
+        if user is None or not auth_service.is_authorized(int(user.id)):
             await message.reply_text(
-                texts.ITICK_TOKEN_REQUIRED,
+                "🚫 Доступ запрещён. Выполните /auth и отправьте токен.",
                 reply_markup=ui.pair_keyboard(),
             )
             return SELECT_PRESETS
@@ -132,6 +141,7 @@ def make_preset_menu_handler(state_store: SessionStateStore, repo: UserSignalPre
                 context,
                 state_store,
                 repo,
+                auth_service,
                 state.pair_code,
                 state.selected_preset_ids,
             )

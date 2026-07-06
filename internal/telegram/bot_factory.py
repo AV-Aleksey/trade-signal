@@ -9,6 +9,7 @@ from telegram.ext import (
 from internal.config import settings
 from internal.storage.itick_token_repository import ItickTokenRepository
 from internal.storage.preset_repository import UserSignalPresetRepository
+from internal.storage.user_auth_repository import UserAuthRepository
 from internal.telegram.services import AiReportService, DataSnapshotService
 from internal.telegram.state import SessionStateStore
 from internal.telegram.steps.flow import (
@@ -17,6 +18,7 @@ from internal.telegram.steps.flow import (
     PRESET_CREATE_NAME,
     PRESET_CREATE_SIGNALS,
     PRESET_CREATE_TICK,
+    AUTH_WAIT,
     SELECT_PRESETS,
     MONITORING,
     SELECT_PAIR,
@@ -26,6 +28,7 @@ from internal.telegram.steps.monitoring_step import make_monitoring_handler
 from internal.telegram.steps.pair_step import make_pair_handler
 from internal.telegram.steps.start_step import make_start_handler
 from internal.telegram.steps.token_step import make_itick_entry_handler, make_token_handler
+from internal.telegram.steps.auth_step import make_auth_handler, make_auth_wait_handler
 from internal.telegram.steps.presets_step import (
     make_signals_entry_handler,
     make_preset_menu_handler,
@@ -34,6 +37,7 @@ from internal.telegram.steps.presets_step import (
     make_preset_create_signals_handler,
     make_preset_create_filters_handler,
 )
+from internal.telegram.auth import AuthService
 
 
 async def _post_init(application: Application) -> None:
@@ -42,6 +46,7 @@ async def _post_init(application: Application) -> None:
             BotCommand("start", "Начать работу с ботом"),
             BotCommand("itick", "Сохранить iTick токен"),
             BotCommand("signals", "Настроить сигналы"),
+            BotCommand("auth", "Авторизация /auth"),
         ],
     )
     await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
@@ -61,15 +66,18 @@ def build_application(
     state_store = SessionStateStore()
     itick_token_repository = ItickTokenRepository()
     preset_repository = UserSignalPresetRepository()
+    auth_repository = UserAuthRepository()
+    allowed_tokens = [t.strip() for t in settings.BOT_ACCESS_TOKENS.split(",") if t.strip()]
+    auth_service = AuthService(allowed_tokens, auth_repository)
     ai_service = AiReportService(settings.OPEN_ROUTER_API_KEY)
     snapshot_service = DataSnapshotService()
 
-    start_handler = make_start_handler(state_store)
-    pair_handler = make_pair_handler(state_store, preset_repository)
-    itick_entry_handler = make_itick_entry_handler()
-    token_handler = make_token_handler(itick_token_repository)
-    preset_menu_handler = make_preset_menu_handler(state_store, preset_repository)
-    preset_manage_entry = make_signals_entry_handler(state_store, preset_repository)
+    start_handler = make_start_handler(state_store, auth_service)
+    pair_handler = make_pair_handler(state_store, preset_repository, auth_service)
+    itick_entry_handler = make_itick_entry_handler(auth_service)
+    token_handler = make_token_handler(itick_token_repository, auth_service)
+    preset_menu_handler = make_preset_menu_handler(state_store, preset_repository, auth_service)
+    preset_manage_entry = make_signals_entry_handler(state_store, preset_repository, auth_service)
     preset_create_name_handler = make_preset_create_name_handler(state_store, preset_repository)
     preset_create_tick_handler = make_preset_create_tick_handler(state_store)
     preset_create_signals_handler = make_preset_create_signals_handler(state_store)
@@ -80,7 +88,10 @@ def build_application(
         ai_service,
         snapshot_service,
         preset_repository,
+        auth_service,
     )
+    auth_handler = make_auth_handler(auth_service)
+    auth_wait_handler = make_auth_wait_handler(auth_service)
 
     conversation = ConversationHandler(
         entry_points=[
@@ -95,6 +106,10 @@ def build_application(
             CommandHandler(
                 "itick",
                 itick_entry_handler,
+            ),
+            CommandHandler(
+                "auth",
+                auth_handler,
             ),
         ],
         states={
@@ -121,6 +136,9 @@ def build_application(
             ],
             MONITORING: [
                 MessageHandler(TEXT_MESSAGE_FILTER, monitoring_handler),
+            ],
+            AUTH_WAIT: [
+                MessageHandler(TEXT_MESSAGE_FILTER, auth_wait_handler),
             ],
         },
         fallbacks=[],

@@ -16,6 +16,7 @@ from internal.telegram.services import (
 )
 from internal.telegram.state import SessionStateStore
 from internal.telegram.steps.flow import MONITORING, SELECT_PRESETS
+from internal.telegram.auth import AuthService
 
 AI_COOLDOWN_SEC = 60.0
 
@@ -75,6 +76,7 @@ def make_monitoring_handler(
     ai_service: AiReportService,
     snapshot_service: DataSnapshotService,
     preset_repository: UserSignalPresetRepository,
+    auth_service: AuthService,
 ):
     async def handle_monitoring(update, context: ContextTypes.DEFAULT_TYPE) -> int:
         message = update.message
@@ -123,9 +125,9 @@ def make_monitoring_handler(
 
             user = update.effective_user
 
-            if user is None:
+            if user is None or not auth_service.is_authorized(int(user.id)):
                 await message.reply_text(
-                    texts.ITICK_TOKEN_REQUIRED,
+                    "🚫 Доступ запрещён. Выполните /auth и отправьте токен.",
                     reply_markup=ui.pair_keyboard(),
                 )
 

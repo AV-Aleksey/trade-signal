@@ -1,6 +1,7 @@
 from telegram.ext import ContextTypes
 
 from internal.storage.preset_repository import UserSignalPresetRepository
+from internal.telegram.auth import AuthService
 from internal.telegram import texts, ui
 from internal.telegram.monitor_job import MonitorJob
 from internal.telegram.state import SessionState, SessionStateStore
@@ -12,14 +13,15 @@ async def start_monitoring_presets(
     context: ContextTypes.DEFAULT_TYPE,
     state_store: SessionStateStore,
     preset_repository: UserSignalPresetRepository,
+    auth_service: AuthService,
     pair_code: str,
     selected_preset_ids: set[int],
 ) -> int:
     user = update.effective_user
 
-    if user is None:
+    if user is None or not auth_service.is_authorized(int(user.id)):
         await update.message.reply_text(
-            texts.ITICK_TOKEN_REQUIRED,
+            "🚫 Доступ запрещён. Выполните /auth и отправьте токен.",
             reply_markup=ui.pair_keyboard(),
         )
 

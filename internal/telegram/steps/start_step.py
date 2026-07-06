@@ -2,15 +2,21 @@ from telegram.ext import ConversationHandler, ContextTypes
 
 from internal.telegram import texts, ui
 from internal.telegram.state import SessionStateStore
+from internal.telegram.auth import AuthService
 from internal.telegram.steps.flow import SELECT_PAIR
 from internal.telegram.monitor_job import MonitorJob
 
 
-def make_start_handler(state_store: SessionStateStore):
+def make_start_handler(state_store: SessionStateStore, auth_service: AuthService):
     async def handle_start(update, context: ContextTypes.DEFAULT_TYPE) -> int:
         message = update.message
 
         if message is None:
+            return ConversationHandler.END
+
+        user = update.effective_user
+        if user is None or not auth_service.is_authorized(int(user.id)):
+            await message.reply_text("🚫 Доступ запрещён. Выполните /auth и отправьте токен.")
             return ConversationHandler.END
 
         MonitorJob(context.job_queue, update.effective_chat.id).remove()
